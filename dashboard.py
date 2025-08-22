@@ -62,10 +62,17 @@ st.markdown("""
 @st.cache_data
 def carregar_dados(arquivo_carregado):
     """
-    Carrega e processa os dados do arquivo CSV carregado pelo usuário.
+    Carrega e processa os dados do arquivo (Excel ou CSV) carregado pelo usuário.
     """
     try:
-        df = pd.read_csv(arquivo_carregado)
+        # <-- MUDANÇA AQUI: Verifica a extensão do arquivo para usar a função de leitura correta
+        if arquivo_carregado.name.endswith('.csv'):
+            df = pd.read_csv(arquivo_carregado)
+        elif arquivo_carregado.name.endswith(('.xls', '.xlsx')):
+            df = pd.read_excel(arquivo_carregado)
+        else:
+            st.error("Formato de arquivo não suportado. Por favor, use CSV ou Excel.")
+            return None, None
     except Exception as e:
         st.error(f"Erro ao ler o arquivo: {e}")
         return None, None
@@ -83,13 +90,11 @@ def carregar_dados(arquivo_carregado):
         'operador_col': 'Operador'
     }
 
-    # Validação se as colunas existem
     for col in colunas_esperadas.values():
         if col not in df.columns:
-            st.error(f"Coluna esperada '{col}' não encontrada no arquivo. Por favor, verifique o CSV.")
+            st.error(f"Coluna esperada '{col}' não encontrada no arquivo. Por favor, verifique o arquivo.")
             return None, None
             
-    # Função para converter 'HH:MM:SS' ou 'MM:SS' em segundos
     def tempo_para_segundos(tempo_str):
         if isinstance(tempo_str, str):
             partes = list(map(int, tempo_str.split(':')))
@@ -97,8 +102,8 @@ def carregar_dados(arquivo_carregado):
             if len(partes) == 2: return partes[0] * 60 + partes[1]
         return np.nan
 
-    df['TMA_segundos'] = df[colunas_esperadas['tma_col']].apply(tempo_para_segundos)
-    df['TMR_segundos'] = df[colunas_esperadas['tmr_col']].apply(tempo_para_segundos)
+    df['TMA_segundos'] = df[colunas_esperadas['tma_col']].astype(str).apply(tempo_para_segundos)
+    df['TMR_segundos'] = df[colunas_esperadas['tmr_col']].astype(str).apply(tempo_para_segundos)
     df['Atendido'] = df[colunas_esperadas['atendido_col']].apply(lambda x: 1 if x in ['Atendido', 'Resolvido'] else 0)
     df['Resolvido'] = df[colunas_esperadas['resolvido_col']].apply(lambda x: 1 if x == 'Resolvido' else 0)
     df['Data'] = pd.to_datetime(df[colunas_esperadas['entrante_col']]).dt.date
@@ -106,7 +111,6 @@ def carregar_dados(arquivo_carregado):
     return df, colunas_esperadas
 
 def segundos_para_tempo_str(segundos):
-    """Converte segundos para uma string no formato MM:SS."""
     if pd.isna(segundos): return "00:00"
     segundos = int(segundos)
     minutos, segundos_restantes = divmod(segundos, 60)
@@ -133,10 +137,10 @@ def pagina_geral(df, cols):
         st.metric(label="TOTAL DE ENTRANTES", value=total_entrantes, help="Todos os contatos recebidos")
         st.metric(label="TMPR (TAXA DE RESOLUÇÃO)", value=f"{taxa_resolucao_geral:.1f}%")
     with col2:
-        st.metric(label="TOTAL ATENDIDOS", value=total_atendidos, delta=f"{taxa_atendimento:.1f}% dos entrantes")
+        st.metric(label="TOTAL ATENDIDOS", value=int(total_atendidos), delta=f"{taxa_atendimento:.1f}% dos entrantes")
         st.metric(label="TMA MÉDIO", value=segundos_para_tempo_str(tma_medio_seg), help="Tempo médio de atendimento")
     with col3:
-        st.metric(label="TOTAL RESOLVIDOS", value=total_resolvidos, delta=f"{taxa_resolucao_geral:.1f}% dos atendidos")
+        st.metric(label="TOTAL RESOLVIDOS", value=int(total_resolvidos), delta=f"{taxa_resolucao_geral:.1f}% dos atendidos")
         st.metric(label="TMR MÉDIO", value=segundos_para_tempo_str(tmr_medio_seg), help="Tempo médio de resposta")
     with col4:
         st.metric(label="CSAT MÉDIO", value=f"{csat_medio:.1f}%", help="Satisfação do cliente")
@@ -174,7 +178,6 @@ def pagina_lideres(df, cols):
     st.header("Desempenho por Líder")
 
     lideres_stats = df.groupby(cols['lider_col']).agg(
-        Entrantes=(cols['entrante_col'], 'count'),
         Atendidos=('Atendido', 'sum'),
         Resolvidos=('Resolvido', 'sum'),
         CSAT=(cols['csat_col'], 'mean'),
@@ -247,8 +250,8 @@ def main():
     st.title("Dashboard de Indicadores Operacionais")
     
     uploaded_file = st.sidebar.file_uploader(
-        "Faça o upload do seu arquivo CSV", 
-        type=['csv']
+        "Faça o upload do seu arquivo (Excel ou CSV)", 
+        type=['csv', 'xlsx', 'xls'] # <-- MUDANÇA AQUI
     )
 
     if uploaded_file is not None:
@@ -271,8 +274,7 @@ def main():
             elif pagina_selecionada == "Melhorias":
                 pagina_melhorias(df, colunas_esperadas)
     else:
-        st.info("Para começar, faça o upload de um arquivo CSV na barra lateral.")
-        st.image("https://streamlit.io/images/brand/streamlit-logo-secondary-colormark-darktext.png", width=200)
+        st.info("Para começar, faça o upload de um arquivo Excel ou CSV na barra lateral.")
 
 if __name__ == '__main__':
     main()
