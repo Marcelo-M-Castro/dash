@@ -1,140 +1,162 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
+import numpy as np
+import altair as alt
 
-# ==================
-# CONFIGURAÇÃO INICIAL
-# ==================
-st.set_page_config(page_title="Dashboard Performance", layout="wide")
+# ============================
+# CONFIGURAÇÃO DA PÁGINA
+# ============================
+st.set_page_config(
+    page_title="Dashboard de Performance Operacional",
+    page_icon="📊",
+    layout="wide"
+)
 
-# ==================
+# ============================
+# ESTILOS VISUAIS (CSS)
+# ============================
+st.markdown("""
+<style>
+/* FUNDO E LAYOUT */
+.main .block-container { padding: 2rem; background-color: #F7F9FB; }
+/* CABEÇALHO */
+.main > div:first-child { background-color: #0B2B40; padding: 1.5rem; border-radius: 0 0 10px 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+h1 { color: white !important; text-align: center; }
+/* TÍTULOS */
+.page-header { font-size: 26px; font-weight: bold; color: #0B2B40; margin-bottom: 1rem; }
+.section-header { font-size: 20px; font-weight: bold; color: #38A3A5; margin-top: 2rem; margin-bottom: 1rem; border-bottom: 2px solid #E0E0E0; padding-bottom: 10px; }
+/* CARTÕES DE MÉTRICA */
+.metric-card, .metric-card-leader { background-color: #FFFFFF; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 15px; height: 100%; }
+.metric-card { border-left: 6px solid #38A3A5; }
+.metric-card-leader { border-top: 4px solid #004D7A; }
+.card-title { font-size: 16px; color: #6C757D; }
+.metric-value { font-size: 28px; font-weight: bold; color: #0B2B40; }
+.metric-delta { font-size: 14px; }
+.text-green { color: #28a745; }
+.text-red { color: #d32f2f; }
+/* BARRA LATERAL */
+[data-testid="stSidebar"] { background-color: #FFFFFF; }
+</style>
+""", unsafe_allow_html=True)
+
+# ============================
 # FUNÇÕES AUXILIARES
-# ==================
-def calcular_metricas(df):
-    df['resolvido'] = df['status'] == 'Resolvido'
-    df['atend_1min'] = df['tempo_resposta'] <= 60
+# ============================
+@st.cache_data
+def carregar_dados(arquivo_carregado):
+    try:
+        if arquivo_carregado.name.endswith(('xls','xlsx')):
+            df = pd.read_excel(arquivo_carregado)
+        else:
+            df = pd.read_csv(arquivo_carregado)
+    except Exception as e:
+        st.error(f"Erro ao ler o arquivo: {e}")
+        return None
+
+    colunas_map = {
+        'data_atendimento': 'Data',
+        'Total de entrantes': 'Entrantes',
+        'Atendidos': 'Atendidos',
+        'Total de Tickets': 'Tickets',
+        'Total de tickets Resolvidos': 'Resolvidos',
+        '% Avaliações CSAT 4 e 5': 'CSAT_pc',
+        '% Atendidos 1 min': 'SLA_pc',
+        'TMA': 'TMA_str',
+        'TMR': 'TMR_str',
+        'Líder': 'Líder',
+        'agente_email': 'Operador'
+    }
+
+    try:
+        df = df.rename(columns=colunas_map)
+    except Exception:
+        st.error("Erro ao renomear colunas.")
+        return None
+
+    # Conversões
+    def clean_percentage(pc):
+        if isinstance(pc, str):
+            return float(pc.replace('%','').replace(',','.'))
+        if isinstance(pc, (int,float)):
+            return float(pc)
+        return 0
+
+    def tempo_para_segundos(ts):
+        if isinstance(ts,str):
+            parts = ts.split(':')
+            if len(parts) == 3:
+                return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
+            if len(parts) == 2:
+                return int(parts[0])*60 + int(parts[1])
+        return np.nan
+
+    df['Data'] = pd.to_datetime(df['Data']).dt.date
+    df['CSAT'] = df['CSAT_pc'].apply(clean_percentage)
+    df['SLA'] = df['SLA_pc'].apply(clean_percentage)
+    df['TMA_segundos'] = df['TMA_str'].apply(tempo_para_segundos)
+    df['TMR_segundos'] = df['TMR_str'].apply(tempo_para_segundos)
+
     return df
 
-# ==================
+def segundos_para_tempo_str(s):
+    if pd.isna(s):
+        return "00:00"
+    minutos, segundos = divmod(int(s),60)
+    return f"{minutos:02d}:{segundos:02d}"
+
+# ============================
 # PÁGINAS DO DASHBOARD
-# ==================
-def pagina_overview(df):
-    st.title("📊 Visão Geral")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Atendimentos", len(df))
-    col2.metric("% Resolvidos", f"{100*df['resolvido'].mean():.1f}%")
-    col3.metric("% Até 1 min", f"{100*df['atend_1min'].mean():.1f}%")
+# ============================
 
-    st.subheader("Distribuição por Canal")
-    canais = df['canal'].value_counts()
-    fig, ax = plt.subplots()
-    canais.plot(kind="bar", ax=ax)
-    st.pyplot(fig)
+def pagina_geral(df):
+    st.markdown('<p class="page-header">Visão Geral da Operação</p>', unsafe_allow_html=True)
 
+    entrantes = df['Entrantes'].sum()
+    atendidos = df['Atendidos'].sum()
+    resolvidos = df['Resolvidos'].sum()
+    taxa_res = (resolvidos/atendidos*100) if atendidos>0 else 0
+    csat = (df['CSAT']*df['Atendidos']).sum()/atendidos if atendidos>0 else 0
+    tma = (df['TMA_segundos']*df['Atendidos']).sum()/atendidos if atendidos>0 else 0
+    tmr = (df['TMR_segundos']*df['Atendidos']).sum()/atendidos if atendidos>0 else 0
+    media_dia = atendidos/df['Data'].nunique() if df['Data'].nunique()>0 else 0
 
-def pagina_lideres(df):
-    st.title("👩‍💼 Análise por Líderes")
-    lideres = df['lider'].unique().tolist()
-    lider_sel = st.selectbox("Selecione um líder", ["Todos"] + lideres)
-    if lider_sel != "Todos":
-        df = df[df['lider'] == lider_sel]
+    col1,col2,col3,col4 = st.columns(4)
+    col1.metric("📞 Total de Entrantes", f"{int(entrantes):,}")
+    col2.metric("🤝 Total Atendidos", f"{int(atendidos):,}")
+    col3.metric("✅ Total Resolvidos", f"{int(resolvidos):,}")
+    col4.metric("📈 Taxa de Resolução (TMPR)", f"{taxa_res:.1f}%")
 
-    st.subheader("Métricas por Agente")
-    resumo = df.groupby("agente").agg({
-        "resolvido": "mean",
-        "atend_1min": "mean",
-        "id": "count"
-    }).reset_index()
-    resumo.columns = ["Agente", "% Resolvidos", "% Até 1 min", "Qtd Atendimentos"]
-    st.dataframe(resumo, use_container_width=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
+    col5,col6,col7,col8 = st.columns(4)
+    col5.metric("😊 CSAT Médio", f"{csat:.1f}%")
+    col6.metric("⏱️ TMA Médio", segundos_para_tempo_str(tma))
+    col7.metric("⏱️ TMR Médio", segundos_para_tempo_str(tmr))
+    col8.metric("📅 Média Atendimentos/Dia", f"{media_dia:.0f}")
+
+    st.markdown('<p class="section-header">Tendência Diária</p>', unsafe_allow_html=True)
+    daily_stats = df.groupby('Data').agg(Atendimentos=('Atendidos','sum')).reset_index()
+    chart = alt.Chart(daily_stats).mark_area(
+        line={'color':'#38A3A5'},
+        color=alt.Gradient(
+            gradient='linear',
+            stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#38A3A5', offset=1)],
+            x1=1,x2=1,y1=1,y2=0
+        )
+    ).encode(x=alt.X('Data:T', title='Data'), y=alt.Y('Atendimentos:Q', title='Nº de Atendimentos')).interactive()
+    st.altair_chart(chart, use_container_width=True)
 
 def pagina_melhorias(df):
     st.markdown('<p class="page-header">Oportunidades de Melhoria</p>', unsafe_allow_html=True)
 
-    # Conversão de colunas percentuais e tempo
-    def perc_to_float(pc):
-        if isinstance(pc, str):
-            return float(pc.replace('%','').replace(',','.'))
-        return float(pc)
-
-    df['% Total de tickets Resolvidos'] = df['% Total de tickets Resolvidos'].apply(perc_to_float)
-    df['% Avaliações CSAT 4 e 5'] = df['% Avaliações CSAT 4 e 5'].apply(perc_to_float)
-    df['% Atendidos 1 min'] = df['% Atendidos 1 min'].apply(perc_to_float)
+    # Converter percentuais
+    df['% Total de tickets Resolvidos'] = df['% Total de tickets Resolvidos'].str.rstrip('%').astype(float)
+    df['% Avaliações CSAT 4 e 5'] = df['% Avaliações CSAT 4 e 5'].str.rstrip('%').astype(float)
+    df['% Atendidos 1 min'] = df['% Atendidos 1 min'].str.rstrip('%').astype(float)
 
     media_res = df['% Total de tickets Resolvidos'].mean()
     media_csat = df['% Avaliações CSAT 4 e 5'].mean()
     media_sla = df['% Atendidos 1 min'].mean()
 
-    # Agrupa por agente
-    stats = df.groupby('agente_email', as_index=False).agg(
-        Atendidos=('Atendidos', 'sum'),
-        Resolvidos=('Total de tickets Resolvidos', 'sum'),
-        pct_resolvidos=('% Total de tickets Resolvidos', 'mean'),
-        csat=('% Avaliações CSAT 4 e 5', 'mean'),
-        sla=('% Atendidos 1 min', 'mean'),
-        TMA=('TMA', 'first'),  # pode ajustar média se necessário
-        TMR=('TMR', 'first')
-    )
-
-    # Ordena pelos menores CSAT (detratores)
-    stats = stats.sort_values('csat').head(3)
-
-    n_cols = 3  # número de colunas por linha
-    for i in range(0, len(stats), n_cols):
-        cols = st.columns(n_cols)
-        for j, (_, row) in enumerate(stats.iloc[i:i+n_cols].iterrows()):
-            with cols[j]:
-                delta_res = row['pct_resolvidos'] - media_res
-                delta_csat = row['csat'] - media_csat
-                delta_sla = row['sla'] - media_sla
-
-                st.markdown(f"""
-                    <div class="metric-card-leader">
-                        <p class="card-title" style="text-align:center; font-weight:bold;">{row['agente_email'].split('@')[0]}</p>
-                        <hr>
-                        <p><strong>CSAT:</strong> {row['csat']:.1f}% 
-                            <span class="metric-delta {'text-green' if delta_csat>=0 else 'text-red'}">({delta_csat:+.1f}%)</span></p>
-                        <p><strong>Resolução:</strong> {row['pct_resolvidos']:.1f}% 
-                            <span class="metric-delta {'text-green' if delta_res>=0 else 'text-red'}">({delta_res:+.1f}%)</span></p>
-                        <p><strong>Atendidos 1 min:</strong> {row['sla']:.1f}% 
-                            <span class="metric-delta {'text-green' if delta_sla>=0 else 'text-red'}">({delta_sla:+.1f}%)</span></p>
-                        <p><strong>Total Atendidos:</strong> {int(row['Atendidos'])}</p>
-                        <p><strong>TMA:</strong> {row['TMA']}</p>
-                        <p><strong>TMR:</strong> {row['TMR']}</p>
-                    </div>
-                """, unsafe_allow_html=True)
-
-
-
-# ==================
-# MAIN
-# ==================
-def main():
-    st.sidebar.title("📌 Navegação")
-    pagina = st.sidebar.radio("Ir para:", ["Visão Geral", "Análise por Líderes", "Oportunidades de Melhoria"])
-
-    # Simulação de base
-    data = {
-        "id": range(1, 101),
-        "status": ["Resolvido"]*70 + ["Pendente"]*30,
-        "tempo_resposta": [30, 90, 45, 120, 15]*20,
-        "canal": ["Chat", "WhatsApp", "Email", "Chat", "WhatsApp"]*20,
-        "lider": ["Líder A", "Líder B", "Líder A", "Líder C", "Líder B"]*20,
-        "agente": ["Agente 1", "Agente 2", "Agente 3", "Agente 4", "Agente 5"]*20
-    }
-    df = pd.DataFrame(data)
-    df = calcular_metricas(df)
-
-    if pagina == "Visão Geral":
-        pagina_overview(df)
-    elif pagina == "Análise por Líderes":
-        pagina_lideres(df)
-    elif pagina == "Oportunidades de Melhoria":
-        pagina_melhorias(df)
-
-
-if __name__ == "__main__":
-    main()
-
-
+    # Agrupar por operador
+    stats = df.groupby('agente_email', as_index=False
