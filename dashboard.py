@@ -9,72 +9,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- CARREGAMENTO E PREPARAÇÃO DOS DADOS ---
-# Cache para otimizar o carregamento dos dados
-@st.cache_data
-def carregar_dados(caminho_arquivo):
-    """
-    Carrega e processa os dados do arquivo CSV.
-    Assume que as colunas de tempo (TMA, TMR) estão em formato de texto 'HH:MM:SS'
-    e as converte para segundos para facilitar os cálculos.
-    """
-    try:
-        df = pd.read_csv(caminho_arquivo)
-    except FileNotFoundError:
-        st.error(f"Arquivo não encontrado: {caminho_arquivo}. Por favor, certifique-se de que o arquivo está na mesma pasta que o script.")
-        return None
-
-    # Suposições dos nomes das colunas - ajuste se necessário
-    colunas_esperadas = {
-        'entrante_col': 'Data de Entrada',  # Coluna com data/hora para contar entrantes
-        'atendido_col': 'Status da Chamada', # Coluna para verificar se foi atendido
-        'resolvido_col': 'Status da Chamada',# Coluna para verificar se foi resolvido
-        'csat_col': 'CSAT',                 # Coluna de CSAT (0-100)
-        'tma_col': 'TMA',                   # Tempo Médio de Atendimento
-        'tmr_col': 'TMR',                   # Tempo Médio de Resposta
-        'categoria_col': 'Categoria',       # Categoria do atendimento
-        'lider_col': 'Líder',               # Nome do Líder
-        'operador_col': 'Operador'          # Nome do Operador
-    }
-
-    # Renomear colunas para o padrão usado no script
-    # Adicione aqui o mapeamento das suas colunas se os nomes forem diferentes
-    # Ex: df.rename(columns={'Nome Antigo': 'Nome Novo'}, inplace=True)
-
-    # Função para converter 'HH:MM:SS' ou 'MM:SS' em segundos
-    def tempo_para_segundos(tempo_str):
-        if isinstance(tempo_str, str):
-            partes = list(map(int, tempo_str.split(':')))
-            if len(partes) == 3: # HH:MM:SS
-                return partes[0] * 3600 + partes[1] * 60 + partes[2]
-            elif len(partes) == 2: # MM:SS
-                return partes[0] * 60 + partes[1]
-        return np.nan # Retorna NaN se o formato for inválido ou o valor não for string
-
-    # Aplicar conversão e tratar erros
-    df['TMA_segundos'] = df[colunas_esperadas['tma_col']].apply(tempo_para_segundos)
-    df['TMR_segundos'] = df[colunas_esperadas['tmr_col']].apply(tempo_para_segundos)
-
-    # Criar colunas para o cálculo de atendidos e resolvidos
-    df['Atendido'] = df[colunas_esperadas['atendido_col']].apply(lambda x: 1 if x in ['Atendido', 'Resolvido'] else 0)
-    df['Resolvido'] = df[colunas_esperadas['resolvido_col']].apply(lambda x: 1 if x == 'Resolvido' else 0)
-
-    # Converter coluna de data para cálculos de média por dia
-    df['Data'] = pd.to_datetime(df[colunas_esperadas['entrante_col']]).dt.date
-
-
-    return df, colunas_esperadas
-
-def segundos_para_tempo_str(segundos):
-    """Converte segundos para uma string no formato MM:SS."""
-    if pd.isna(segundos):
-        return "00:00"
-    segundos = int(segundos)
-    minutos = segundos // 60
-    segundos_restantes = segundos % 60
-    return f"{minutos:02d}:{segundos_restantes:02d}"
-
-
 # --- ESTILOS CSS PARA REPLICAR O VISUAL ---
 st.markdown("""
 <style>
@@ -87,6 +21,7 @@ st.markdown("""
         margin: 10px 0;
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         text-align: center;
+        height: 100%;
     }
     .metric-card-highlight {
         border: 2px solid #28a745; /* Verde para destaque */
@@ -95,6 +30,11 @@ st.markdown("""
         font-size: 18px;
         color: #5a5a5a;
         margin-bottom: 5px;
+    }
+    .metric-card h4 {
+        font-size: 16px;
+        font-weight: bold;
+        color: #333333;
     }
     .metric-card p {
         font-size: 32px;
@@ -106,28 +46,83 @@ st.markdown("""
         font-size: 14px;
         color: #888888;
     }
-    /* Estilo para os botões de navegação */
     .stButton>button {
         width: 100%;
         border-radius: 20px;
+    }
+    .detrator-card {
+        border: 1px solid #e83e8c;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
-# --- FUNÇÕES PARA RENDERIZAR AS PÁGINAS ---
+# --- FUNÇÕES AUXILIARES ---
+
+@st.cache_data
+def carregar_dados(arquivo_carregado):
+    """
+    Carrega e processa os dados do arquivo CSV carregado pelo usuário.
+    """
+    try:
+        df = pd.read_csv(arquivo_carregado)
+    except Exception as e:
+        st.error(f"Erro ao ler o arquivo: {e}")
+        return None, None
+
+    # Suposições dos nomes das colunas - ajuste se necessário
+    colunas_esperadas = {
+        'entrante_col': 'Data de Entrada',
+        'atendido_col': 'Status da Chamada',
+        'resolvido_col': 'Status da Chamada',
+        'csat_col': 'CSAT',
+        'tma_col': 'TMA',
+        'tmr_col': 'TMR',
+        'categoria_col': 'Categoria',
+        'lider_col': 'Líder',
+        'operador_col': 'Operador'
+    }
+
+    # Validação se as colunas existem
+    for col in colunas_esperadas.values():
+        if col not in df.columns:
+            st.error(f"Coluna esperada '{col}' não encontrada no arquivo. Por favor, verifique o CSV.")
+            return None, None
+            
+    # Função para converter 'HH:MM:SS' ou 'MM:SS' em segundos
+    def tempo_para_segundos(tempo_str):
+        if isinstance(tempo_str, str):
+            partes = list(map(int, tempo_str.split(':')))
+            if len(partes) == 3: return partes[0] * 3600 + partes[1] * 60 + partes[2]
+            if len(partes) == 2: return partes[0] * 60 + partes[1]
+        return np.nan
+
+    df['TMA_segundos'] = df[colunas_esperadas['tma_col']].apply(tempo_para_segundos)
+    df['TMR_segundos'] = df[colunas_esperadas['tmr_col']].apply(tempo_para_segundos)
+    df['Atendido'] = df[colunas_esperadas['atendido_col']].apply(lambda x: 1 if x in ['Atendido', 'Resolvido'] else 0)
+    df['Resolvido'] = df[colunas_esperadas['resolvido_col']].apply(lambda x: 1 if x == 'Resolvido' else 0)
+    df['Data'] = pd.to_datetime(df[colunas_esperadas['entrante_col']]).dt.date
+
+    return df, colunas_esperadas
+
+def segundos_para_tempo_str(segundos):
+    """Converte segundos para uma string no formato MM:SS."""
+    if pd.isna(segundos): return "00:00"
+    segundos = int(segundos)
+    minutos, segundos_restantes = divmod(segundos, 60)
+    return f"{minutos:02d}:{segundos_restantes:02d}"
+
+# --- FUNÇÕES DE RENDERIZAÇÃO DE PÁGINA ---
 
 def pagina_geral(df, cols):
     st.header("Indicadores Operacionais Gerais")
     
-    # Cálculos
     total_entrantes = len(df)
     total_atendidos = df['Atendido'].sum()
     total_resolvidos = df['Resolvido'].sum()
     taxa_atendimento = (total_atendidos / total_entrantes) * 100 if total_entrantes > 0 else 0
     taxa_resolucao_geral = (total_resolvidos / total_atendidos) * 100 if total_atendidos > 0 else 0
     csat_medio = df[cols['csat_col']].mean()
-    tmpr = taxa_resolucao_geral # Usando taxa de resolução como TMPR conforme PDF
     tma_medio_seg = df['TMA_segundos'].mean()
     tmr_medio_seg = df['TMR_segundos'].mean()
     dias_unicos = df['Data'].nunique()
@@ -135,65 +130,17 @@ def pagina_geral(df, cols):
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>TOTAL DE ENTRANTES</h3>
-            <p>{total_entrantes}</p>
-            <span>Todos os contatos recebidos</span>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>TMPR</h3>
-            <p>{tmpr:.1f}%</p>
-            <span>Taxa de resolução</span>
-        </div>
-        """, unsafe_allow_html=True)
+        st.metric(label="TOTAL DE ENTRANTES", value=total_entrantes, help="Todos os contatos recebidos")
+        st.metric(label="TMPR (TAXA DE RESOLUÇÃO)", value=f"{taxa_resolucao_geral:.1f}%")
     with col2:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>TOTAL ATENDIDOS</h3>
-            <p>{total_atendidos}</p>
-            <span>{taxa_atendimento:.1f}% dos entrantes</span>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>TMA MÉDIO</h3>
-            <p>{segundos_para_tempo_str(tma_medio_seg)}</p>
-            <span>Tempo médio de atendimento</span>
-        </div>
-        """, unsafe_allow_html=True)
+        st.metric(label="TOTAL ATENDIDOS", value=total_atendidos, delta=f"{taxa_atendimento:.1f}% dos entrantes")
+        st.metric(label="TMA MÉDIO", value=segundos_para_tempo_str(tma_medio_seg), help="Tempo médio de atendimento")
     with col3:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>TOTAL RESOLVIDOS</h3>
-            <p>{total_resolvidos}</p>
-            <span>{taxa_resolucao_geral:.1f}% dos atendidos</span>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>TMR MÉDIO</h3>
-            <p>{segundos_para_tempo_str(tmr_medio_seg)}</p>
-            <span>Tempo médio de resposta</span>
-        </div>
-        """, unsafe_allow_html=True)
+        st.metric(label="TOTAL RESOLVIDOS", value=total_resolvidos, delta=f"{taxa_resolucao_geral:.1f}% dos atendidos")
+        st.metric(label="TMR MÉDIO", value=segundos_para_tempo_str(tmr_medio_seg), help="Tempo médio de resposta")
     with col4:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>CSAT MÉDIO</h3>
-            <p>{csat_medio:.1f}%</p>
-            <span>Satisfação do cliente</span>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>MÉDIA DE ATENDIMENTO/DIA</h3>
-            <p>{media_atend_dia:.0f}</p>
-            <span>Quantidade média</span>
-        </div>
-        """, unsafe_allow_html=True)
+        st.metric(label="CSAT MÉDIO", value=f"{csat_medio:.1f}%", help="Satisfação do cliente")
+        st.metric(label="MÉDIA DE ATENDIMENTO/DIA", value=f"{media_atend_dia:.0f}")
 
 def pagina_categorias(df, cols):
     st.header("Resolvidos por Categoria")
@@ -204,17 +151,15 @@ def pagina_categorias(df, cols):
     for i, categoria in enumerate(categorias):
         with colunas[i]:
             df_cat = df[df[cols['categoria_col']] == categoria]
-            
             atendimentos = df_cat['Atendido'].sum()
             resolvidos = df_cat['Resolvido'].sum()
             taxa_resolucao = (resolvidos / atendimentos * 100) if atendimentos > 0 else 0
             
-            # Cartão da categoria
             st.markdown(f"""
             <div class="metric-card">
                 <h3>{categoria}</h3>
                 <p style="font-size: 24px;">{taxa_resolucao:.0f}%</p>
-                <progress value="{taxa_resolucao}" max="100"></progress>
+                <progress value="{int(taxa_resolucao)}" max="100"></progress>
                 <hr>
                 <div style="display: flex; justify-content: space-between; text-align: left;">
                     <span>Atendimentos:</span> <strong>{atendimentos}</strong>
@@ -222,45 +167,33 @@ def pagina_categorias(df, cols):
                 <div style="display: flex; justify-content: space-between; text-align: left;">
                     <span>Resolvidos:</span> <strong>{resolvidos}</strong>
                 </div>
-                <div style="display: flex; justify-content: space-between; text-align: left;">
-                    <span>Taxa de Resolução:</span> <strong>{taxa_resolucao:.0f}%</strong>
-                </div>
             </div>
             """, unsafe_allow_html=True)
-
 
 def pagina_lideres(df, cols):
     st.header("Desempenho por Líder")
 
     lideres_stats = df.groupby(cols['lider_col']).agg(
-        Entrantes=('Entrantes', 'count'),
+        Entrantes=(cols['entrante_col'], 'count'),
         Atendidos=('Atendido', 'sum'),
         Resolvidos=('Resolvido', 'sum'),
         CSAT=(cols['csat_col'], 'mean'),
         TMA_medio=('TMA_segundos', 'mean'),
         TMR_medio=('TMR_segundos', 'mean')
     ).reset_index()
-
     lideres_stats['Taxa_Resolucao'] = (lideres_stats['Resolvidos'] / lideres_stats['Atendidos']) * 100
-    
-    # Destacar o líder do meio (exemplo visual)
-    num_lideres = len(lideres_stats)
-    colunas_lideres = st.columns(num_lideres)
 
+    colunas_lideres = st.columns(len(lideres_stats))
     for i, row in lideres_stats.iterrows():
         with colunas_lideres[i]:
-            highlight_class = "metric-card-highlight" if i == 1 else "" # Destaque no segundo
             st.markdown(f"""
-            <div class="metric-card {highlight_class}">
-                <h3>{row[cols['lider_col']]}</h3>
+            <div class="metric-card">
+                <h4>{row[cols['lider_col']]}</h4>
                 <div style="display: flex; justify-content: space-around;">
-                    <div><span>ENTRANTES</span><p style="font-size: 22px;">{row.Entrantes}</p></div>
                     <div><span>ATENDIDOS</span><p style="font-size: 22px;">{row.Atendidos}</p></div>
-                </div>
-                <div style="display: flex; justify-content: space-around; margin-top: 10px;">
                     <div><span>RESOLVIDOS</span><p style="font-size: 22px;">{row.Resolvidos} ({row.Taxa_Resolucao:.0f}%)</p></div>
-                    <div><span>CSAT</span><p style="font-size: 22px;">{row.CSAT:.1f}%</p></div>
                 </div>
+                <div><span>CSAT</span><p style="font-size: 22px;">{row.CSAT:.1f}%</p></div>
                 <hr>
                 <div style="text-align: left;">
                     <span>TMA: {segundos_para_tempo_str(row.TMA_medio)}</span><br>
@@ -269,64 +202,39 @@ def pagina_lideres(df, cols):
             </div>
             """, unsafe_allow_html=True)
 
-    # Ranking Geral
-    st.subheader("🏆 Ranking Geral de Desempenho")
-    ranking_col1, ranking_col2, ranking_col3 = st.columns(3)
-
-    with ranking_col1:
-        melhor_tma = lideres_stats.sort_values('TMA_medio', ascending=True).iloc[0]
-        st.info(f"**1º Thays**\n\n🥇 Melhor TMA: {segundos_para_tempo_str(melhor_tma.TMA_medio)}")
-    with ranking_col2:
-        melhor_csat = lideres_stats.sort_values('CSAT', ascending=False).iloc[0]
-        st.info(f"**2º Camila**\n\n🥇 Melhor CSAT: {melhor_csat.CSAT:.1f}%")
-    with ranking_col3:
-        melhor_tmr = lideres_stats.sort_values('TMR_medio', ascending=True).iloc[0]
-        st.info(f"**3º Larissa**\n\n🥇 Melhor TMR: {segundos_para_tempo_str(melhor_tmr.TMR_medio)}")
-
 def pagina_melhorias(df, cols):
     st.header("Oportunidades de Melhoria")
     st.write("Análise dos 3 operadores com menores indicadores para planos de ação.")
     
-    # Médias gerais
-    media_geral_resolucao = (df['Resolvido'].sum() / df['Atendido'].sum()) * 100 if df['Atendido'].sum() > 0 else 0
+    media_geral_resolucao = (df['Resolvido'].sum() / df['Atendido'].sum()) * 100
     media_geral_csat = df[cols['csat_col']].mean()
     
-    # Stats por operador
     operador_stats = df.groupby(cols['operador_col']).agg(
-        Entrantes=('Entrantes', 'count'),
         Atendidos=('Atendido', 'sum'),
         Resolvidos=('Resolvido', 'sum'),
         CSAT=(cols['csat_col'], 'mean')
     ).reset_index()
-
     operador_stats['Taxa_Resolucao'] = (operador_stats['Resolvidos'] / operador_stats['Atendidos']) * 100
-    operador_stats.dropna(inplace=True) # Remover operadores sem todos os dados
-
-    # Identificar os 3 piores (ex: por CSAT)
+    operador_stats.dropna(inplace=True)
+    
     detratores = operador_stats.sort_values('CSAT', ascending=True).head(3)
     
     colunas_detratores = st.columns(3)
-    
     for i, row in detratores.iterrows():
         with colunas_detratores[i]:
             delta_resolucao = row.Taxa_Resolucao - media_geral_resolucao
             delta_csat = row.CSAT - media_geral_csat
-
             st.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card detrator-card">
                 <h4>{i+1}º detrator: {row[cols['operador_col']]}</h4>
                 <div style="text-align: left; color: #dc3545; font-weight: bold;">
                     <span>% Resolvidos: {row.Taxa_Resolucao:.1f}% ({delta_resolucao:+.1f}%)</span><br>
                     <span>CSAT: {row.CSAT:.1f}% ({delta_csat:+.1f}%)</span>
                 </div>
                 <hr>
-                <div style="display: flex; justify-content: space-between;">
-                    <span>Entrantes: {row.Entrantes}</span>
+                <div style="display: flex; justify-content: space-around;">
                     <span>Atendidos: {row.Atendidos}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
                     <span>Resolvidos: {row.Resolvidos}</span>
-                    <span>Tickets: {row.Entrantes}</span>
                 </div>
                 <br>
                 <button style="width: 100%; border-radius: 5px; background-color: #e83e8c; color: white; border: none; padding: 10px;">Plano de Ação</button>
@@ -335,46 +243,36 @@ def pagina_melhorias(df, cols):
 
 # --- APLICAÇÃO PRINCIPAL ---
 
-# --- APLICAÇÃO PRINCIPAL ---
-
 def main():
     st.title("Dashboard de Indicadores Operacionais")
-    st.markdown("Inspirado em meutudo.com.br | Semana: 11/08-15/08")
+    
+    uploaded_file = st.sidebar.file_uploader(
+        "Faça o upload do seu arquivo CSV", 
+        type=['csv']
+    )
 
-    # Carregar dados
-    df, colunas_esperadas = carregar_dados('Tempos Operacionais (1).xlsx - Sheet1.csv')
-
-    # A linha abaixo foi corrigida
-    if df is not None:
-        # Navegação
-        if 'page' not in st.session_state:
-            st.session_state.page = 'Geral'
+    if uploaded_file is not None:
+        df, colunas_esperadas = carregar_dados(uploaded_file)
         
-        col1, col2, col3, col4, col5 = st.columns([2,2,2,2,3])
-        with col1:
-            if st.button("Visão Geral", key='geral'):
-                st.session_state.page = 'Geral'
-        with col2:
-            if st.button("Categorias", key='categorias'):
-                st.session_state.page = 'Categorias'
-        with col3:
-            if st.button("Líderes", key='lideres'):
-                st.session_state.page = 'Líderes'
-        with col4:
-            if st.button("Melhorias", key='melhorias'):
-                st.session_state.page = 'Melhorias'
-        
-        st.markdown("<hr>", unsafe_allow_html=True)
-
-        # Renderizar página selecionada
-        if st.session_state.page == 'Geral':
-            pagina_geral(df, colunas_esperadas)
-        elif st.session_state.page == 'Categorias':
-            pagina_categorias(df, colunas_esperadas)
-        elif st.session_state.page == 'Líderes':
-            pagina_lideres(df, colunas_esperadas)
-        elif st.session_state.page == 'Melhorias':
-            pagina_melhorias(df, colunas_esperadas)
+        if df is not None:
+            st.sidebar.success("Arquivo carregado com sucesso!")
+            st.sidebar.header("Navegação")
+            pagina_selecionada = st.sidebar.radio(
+                "Escolha uma página:",
+                ["Visão Geral", "Categorias", "Líderes", "Melhorias"]
+            )
+            
+            if pagina_selecionada == "Visão Geral":
+                pagina_geral(df, colunas_esperadas)
+            elif pagina_selecionada == "Categorias":
+                pagina_categorias(df, colunas_esperadas)
+            elif pagina_selecionada == "Líderes":
+                pagina_lideres(df, colunas_esperadas)
+            elif pagina_selecionada == "Melhorias":
+                pagina_melhorias(df, colunas_esperadas)
+    else:
+        st.info("Para começar, faça o upload de um arquivo CSV na barra lateral.")
+        st.image("https://streamlit.io/images/brand/streamlit-logo-secondary-colormark-darktext.png", width=200)
 
 if __name__ == '__main__':
     main()
