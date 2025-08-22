@@ -1,72 +1,72 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import altair as alt
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Dashboard de Indicadores Operacionais",
-    page_icon="🎨",
+    page_title="Dashboard de Performance Operacional",
+    page_icon="🚀",
     layout="wide"
 )
 
-# --- IDENTIDADE VISUAL E ESTILOS (CSS) COM AS NOVAS CORES ---
+# --- ESTILOS VISUAIS (CSS) ---
 st.markdown("""
 <style>
-    /* FUNDO DA PÁGINA */
+    /* FUNDO E LAYOUT */
     .main .block-container {
-        background-color: #FCE4EC; /* Fundo claro da página */
+        padding: 2rem;
+        background-color: #F8F9FA;
     }
     
-    /* CABEÇALHO (TÍTULO PRINCIPAL) */
+    /* CABEÇALHO E TÍTULOS */
     .main > div:first-child {
-        background-color: #D81B60; /* Fundo do cabeçalho */
-        padding: 1rem 1rem 0 1rem;
+        background-color: #004D7A;
+        padding: 1rem;
         border-radius: 0 0 10px 10px;
     }
     h1 {
         color: white !important;
         text-align: center;
-        padding-bottom: 15px;
     }
-    
-    /* ESTILO GERAL DOS CARDS */
+    .page-header {
+        font-size: 28px;
+        font-weight: bold;
+        color: #004D7A;
+        margin-bottom: 1.5rem;
+        border-bottom: 2px solid #E0E0E0;
+        padding-bottom: 10px;
+    }
+
+    /* CARTÕES DE MÉTRICA */
     .metric-card {
-        background-color: #FFFFFF; /* Fundo dos cards */
-        border: 2px solid #FF9800; /* Borda laranja dos cards */
+        background-color: #FFFFFF;
         border-radius: 10px;
-        padding: 25px 20px;
-        margin: 10px 0;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        padding: 20px;
         text-align: center;
+        border-top: 5px solid #007ACC;
         height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
+    }
+    .metric-card.good { border-top-color: #28A745; }
+    .metric-card.warning { border-top-color: #FFC107; }
+    
+    .card-title {
+        font-size: 16px;
+        font-weight: bold;
+        color: #6C757D;
+    }
+    .metric-value {
+        font-size: 32px;
+        font-weight: bold;
+        color: #343A40;
     }
     
-    /* TÍTULOS E TEXTOS */
-    .page-header { font-size: 24px; font-weight: bold; color: #333; margin-bottom: 20px; }
-    .card-title { font-size: 18px; font-weight: bold; color: #757575; margin-bottom: 10px; } /* Texto cinza */
-    .metric-value { font-size: 36px; font-weight: bold; color: #333333; }
-    .metric-subtext { font-size: 14px; color: #757575; } /* Texto cinza */
-    .text-red { color: #D32F2F !important; font-weight: bold; } /* Texto vermelho */
-
-    /* BOTÕES */
-    .stButton>button {
-        background-color: #F06292; /* Botões rosa escuro */
-        color: white;
-        border: none;
-        border-radius: 20px;
-        padding: 10px 20px;
-    }
-    .stButton>button:hover {
-        background-color: #D81B60;
-        color: white;
-    }
-
     /* BARRA LATERAL */
-    [data-testid="stSidebar"] { background-color: #FFFFFF; }
-
+    [data-testid="stSidebar"] {
+        background-color: #FFFFFF;
+        border-right: 1px solid #E0E0E0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -81,10 +81,10 @@ def carregar_dados(arquivo_carregado):
         st.error(f"Erro ao ler o arquivo: {e}"); return None
 
     colunas_map = {
-        'data_atendimento': 'Data', 'Total de entrantes': 'Entrantes',
-        'Atendidos': 'Atendidos', 'Total de tickets Resolvidos': 'Resolvidos',
-        '% Avaliações CSAT 4 e 5': 'CSAT_pc', 'TMA': 'TMA_str', 'TMR': 'TMR_str',
-        'Líder': 'Líder', 'agente_email': 'Operador'
+        'data_atendimento': 'Data', 'Total de entrantes': 'Entrantes', 'Atendidos': 'Atendidos',
+        'Total de Tickets': 'Tickets', 'Total de tickets Resolvidos': 'Resolvidos',
+        '% Avaliações CSAT 4 e 5': 'CSAT_pc', '% Atendidos 1 min': 'SLA_pc',
+        'TMA': 'TMA_str', 'TMR': 'TMR_str', 'Líder': 'Líder', 'agente_email': 'Operador'
     }
     try:
         df = df.rename(columns=colunas_map)
@@ -96,16 +96,16 @@ def carregar_dados(arquivo_carregado):
         return float(pc) * 100 if isinstance(pc, (int, float)) else 0
 
     def tempo_para_segundos(ts):
-        if isinstance(ts, (str, int, float)):
-            ts = str(ts); parts = ts.split(':')
+        if isinstance(ts, str):
+            parts = ts.split(':');
             if len(parts) == 3: return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
             if len(parts) == 2: return int(parts[0])*60 + int(parts[1])
         return np.nan
 
     df['Data'] = pd.to_datetime(df['Data']).dt.date
     df['CSAT'] = df['CSAT_pc'].apply(clean_percentage)
+    df['SLA'] = df['SLA_pc'].apply(clean_percentage)
     df['TMA_segundos'] = df['TMA_str'].apply(tempo_para_segundos)
-    df['TMR_segundos'] = df['TMR_str'].apply(tempo_para_segundos)
     return df
 
 def segundos_para_tempo_str(s):
@@ -117,73 +117,89 @@ def segundos_para_tempo_str(s):
 
 def pagina_geral(df):
     st.markdown('<p class="page-header">Visão Geral da Operação</p>', unsafe_allow_html=True)
-    atendidos, resolvidos = df['Atendidos'].sum(), df['Resolvidos'].sum()
+    
+    # Cálculos ponderados
+    atendidos = df['Atendidos'].sum()
+    resolvidos = df['Resolvidos'].sum()
     taxa_res = (resolvidos / atendidos) * 100 if atendidos > 0 else 0
     csat_medio = (df['CSAT'] * df['Atendidos']).sum() / atendidos if atendidos > 0 else 0
     tma_medio = (df['TMA_segundos'] * df['Atendidos']).sum() / atendidos if atendidos > 0 else 0
-    
-    col1, col2, col3 = st.columns(3)
-    col1.markdown(f'<div class="metric-card"><span class="card-title">Taxa de Resolução</span><p class="metric-value">{taxa_res:.1f}%</p><span class="metric-subtext">{int(resolvidos)} de {int(atendidos)}</span></div>', unsafe_allow_html=True)
-    col2.markdown(f'<div class="metric-card"><span class="card-title">CSAT Médio</span><p class="metric-value">{csat_medio:.1f}%</p><span class="metric-subtext">Satisfação do Cliente</span></div>', unsafe_allow_html=True)
-    col3.markdown(f'<div class="metric-card"><span class="card-title">TMA Médio</span><p class="metric-value">{segundos_para_tempo_str(tma_medio)}</p><span class="metric-subtext">Tempo de Atendimento</span></div>', unsafe_allow_html=True)
+    sla_medio = (df['SLA'] * df['Atendidos']).sum() / atendidos if atendidos > 0 else 0
+    total_tickets = df['Tickets'].sum()
 
-def pagina_lideres(df):
-    st.markdown('<p class="page-header">Desempenho por Líder</p>', unsafe_allow_html=True)
-    stats = df.groupby('Líder').agg(Atendidos=('Atendidos', 'sum'), Resolvidos=('Resolvidos', 'sum')).reset_index()
-    stats['Taxa_Resolucao'] = (stats['Resolvidos'] / stats['Atendidos']) * 100
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown(f'<div class="metric-card good"><span class="card-title">📈 Taxa de Resolução</span><p class="metric-value">{taxa_res:.1f}%</p></div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown(f'<div class="metric-card good"><span class="card-title">😊 CSAT Médio</span><p class="metric-value">{csat_medio:.1f}%</p></div>', unsafe_allow_html=True)
+    with col3:
+        st.markdown(f'<div class="metric-card warning"><span class="card-title">⏱️ TMA Médio</span><p class="metric-value">{segundos_para_tempo_str(tma_medio)}</p></div>', unsafe_allow_html=True)
+    with col4:
+        st.markdown(f'<div class="metric-card good"><span class="card-title">⚡ Atend. em 1 min (SLA)</span><p class="metric-value">{sla_medio:.1f}%</p></div>', unsafe_allow_html=True)
     
-    cols = st.columns(len(stats))
-    for i, row in stats.iterrows():
-        cols[i].markdown(f'<div class="metric-card"><p class="card-title" style="font-size: 20px;">{row["Líder"]}</p><p class="metric-value">{row.Taxa_Resolucao:.1f}%</p><span class="metric-subtext">Resolução</span></div>', unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown('<p class="page-header" style="font-size: 22px;">Tendência Diária</p>', unsafe_allow_html=True)
+    
+    daily_stats = df.groupby('Data').agg(
+        Atendimentos=('Atendidos', 'sum'),
+        TMA_total=('TMA_segundos', lambda x: (x * df.loc[x.index, 'Atendidos']).sum()),
+        Atendidos_total=('Atendidos', 'sum')
+    ).reset_index()
+    daily_stats['TMA Médio (seg)'] = daily_stats['TMA_total'] / daily_stats['Atendidos_total']
+    
+    base = alt.Chart(daily_stats).encode(x=alt.X('Data:T', title='Data'))
+    line_atend = base.mark_line(color='#007ACC', point=True).encode(y=alt.Y('Atendimentos:Q', title='Atendimentos'))
+    line_tma = base.mark_line(color='#FFC107', point=True).encode(y=alt.Y('TMA Médio (seg):Q', title='TMA Médio (seg)'))
+    
+    chart = alt.layer(line_atend, line_tma).resolve_scale(y='independent').interactive()
+    st.altair_chart(chart, use_container_width=True)
+
 
 def pagina_ranking(df):
-    st.markdown('<p class="page-header">Ranking Geral de Agentes</p>', unsafe_allow_html=True)
-    stats = df.groupby('Operador').agg(Atendidos=('Atendidos', 'sum'), Resolvidos=('Resolvidos', 'sum')).reset_index()
-    stats['% Resolvidos'] = (stats['Resolvidos'] / stats['Atendidos']) * 100
-    ranking = stats.sort_values(by='% Resolvidos', ascending=False).reset_index(drop=True)
-    st.dataframe(ranking[['Operador', '% Resolvidos']], use_container_width=True)
+    st.markdown('<p class="page-header">Ranking de Performance Individual</p>', unsafe_allow_html=True)
+    
+    stats = df.groupby('Operador').agg(
+        Atendidos=('Atendidos', 'sum'),
+        Resolvidos=('Resolvidos', 'sum'),
+        CSAT_wsum=('CSAT', lambda x: (x * df.loc[x.index, 'Atendidos']).sum()),
+        SLA_wsum=('SLA', lambda x: (x * df.loc[x.index, 'Atendidos']).sum())
+    ).reset_index()
 
-def pagina_melhorias(df):
-    st.markdown('<p class="page-header">Oportunidades de Melhoria</p>', unsafe_allow_html=True)
+    stats['Taxa de Resolução'] = (stats['Resolvidos'] / stats['Atendidos']) * 100
+    stats['CSAT'] = stats['CSAT_wsum'] / stats['Atendidos']
+    stats['SLA'] = stats['SLA_wsum'] / stats['Atendidos']
     
-    media_csat_geral = (df['CSAT'] * df['Atendidos']).sum() / df['Atendidos'].sum()
-    
-    stats = df.groupby('Operador').agg(Atendidos=('Atendidos', 'sum'), CSAT_pond=('CSAT', lambda x: (x * df.loc[x.index, 'Atendidos']).sum())).reset_index()
-    stats['CSAT'] = stats['CSAT_pond'] / stats['Atendidos']
-    
-    detratores = stats.sort_values(by='CSAT', ascending=True).head(3)
-    detratores['delta'] = detratores['CSAT'] - media_csat_geral
-    
-    cols = st.columns(3)
-    for i, row in detratores.iterrows():
-        cols[i].markdown(f"""
-        <div class="metric-card">
-            <p class="card-title">{row['Operador'].split('@')[0]}</p>
-            <p class="metric-value">{row.CSAT:.1f}%</p>
-            <span class="metric-subtext text-red">{row.delta:.1f}% vs média</span>
-        </div>""", unsafe_allow_html=True)
-        cols[i].button("Criar Plano de Ação", key=f"btn_{i}")
+    ranking = stats.sort_values(by='Taxa de Resolução', ascending=False).reset_index(drop=True)
+    st.dataframe(
+        ranking[['Operador', 'Taxa de Resolução', 'CSAT', 'SLA', 'Atendidos']],
+        use_container_width=True,
+        column_config={
+            "Taxa de Resolução": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+            "CSAT": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+            "SLA": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+        }
+    )
 
 # --- APLICAÇÃO PRINCIPAL ---
 def main():
-    st.title("Dashboard de Indicadores")
+    st.title("Performance Operacional")
     
     uploaded_file = st.sidebar.file_uploader("Faça o upload do seu arquivo", type=['csv', 'xlsx', 'xls'])
 
     if uploaded_file:
         df = carregar_dados(uploaded_file)
         if df is not None:
-            st.sidebar.success("Arquivo carregado!")
+            st.sidebar.success("Dados carregados!")
             st.sidebar.header("Navegação")
-            paginas = ["Visão Geral", "Desempenho por Líder", "Ranking Geral", "Oportunidades de Melhoria"]
+            paginas = ["Visão Geral", "Ranking Individual"]
             pagina_selecionada = st.sidebar.radio("Escolha uma página:", paginas)
             
-            if pagina_selecionada == "Visão Geral": pagina_geral(df)
-            elif pagina_selecionada == "Desempenho por Líder": pagina_lideres(df)
-            elif pagina_selecionada == "Ranking Geral": pagina_ranking(df)
-            elif pagina_selecionada == "Oportunidades de Melhoria": pagina_melhorias(df)
+            if pagina_selecionada == "Visão Geral":
+                pagina_geral(df)
+            elif pagina_selecionada == "Ranking Individual":
+                pagina_ranking(df)
     else:
-        st.info("Para começar, faça o upload de um arquivo na barra lateral.")
+        st.info("Para começar, faça o upload de um arquivo de dados na barra lateral.")
 
 if __name__ == '__main__':
     main()
