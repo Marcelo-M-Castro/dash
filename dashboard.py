@@ -335,6 +335,8 @@ def pagina_melhorias(df, cols):
 
 # --- APLICAÇÃO PRINCIPAL ---
 
+# --- APLICAÇÃO PRINCIPAL ---
+
 def main():
     st.title("Dashboard de Indicadores Operacionais")
     st.markdown("Inspirado em meutudo.com.br | Semana: 11/08-15/08")
@@ -342,7 +344,8 @@ def main():
     # Carregar dados
     df, colunas_esperadas = carregar_dados('Tempos Operacionais (1).xlsx - Sheet1.csv')
 
-    if df is not in None:
+    # A linha abaixo foi corrigida
+    if df is not None:
         # Navegação
         if 'page' not in st.session_state:
             st.session_state.page = 'Geral'
