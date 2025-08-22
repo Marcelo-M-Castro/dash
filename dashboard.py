@@ -50,38 +50,60 @@ def pagina_lideres(df):
 
 
 def pagina_melhorias(df):
-    st.header("🔎 Oportunidades de Melhoria")
+    st.markdown('<p class="page-header">Oportunidades de Melhoria</p>', unsafe_allow_html=True)
 
-    # Selecionar líder (filtro opcional)
-    lideres = df["Líder"].dropna().unique()
-    lider_filtro = st.selectbox("Filtrar por Líder", options=["Todos"] + sorted(lideres.tolist()))
-    if lider_filtro != "Todos":
-        df = df[df["Líder"] == lider_filtro]
+    # Conversão de colunas percentuais e tempo
+    def perc_to_float(pc):
+        if isinstance(pc, str):
+            return float(pc.replace('%','').replace(',','.'))
+        return float(pc)
 
-    # Ordenar agentes pela % de tickets resolvidos (menores primeiro = maiores oportunidades)
-    df_sorted = df.groupby("agente_email", as_index=False).agg({
-        "Total de Tickets": "sum",
-        "Total de tickets Resolvidos": "sum",
-        "% Total de tickets Resolvidos": "mean",
-        "% Avaliações CSAT 4 e 5": "mean",
-        "% Atendidos 1 min": "mean",
-        "TMA": "mean",
-        "TMR": "mean"
-    }).sort_values(by="% Total de tickets Resolvidos", ascending=True)
+    df['% Total de tickets Resolvidos'] = df['% Total de tickets Resolvidos'].apply(perc_to_float)
+    df['% Avaliações CSAT 4 e 5'] = df['% Avaliações CSAT 4 e 5'].apply(perc_to_float)
+    df['% Atendidos 1 min'] = df['% Atendidos 1 min'].apply(perc_to_float)
 
-    st.write("Agentes com maiores oportunidades de melhoria (ordenados pelo % resolvidos):")
+    media_res = df['% Total de tickets Resolvidos'].mean()
+    media_csat = df['% Avaliações CSAT 4 e 5'].mean()
+    media_sla = df['% Atendidos 1 min'].mean()
 
-    cols = st.columns(3)  # grid de 3 colunas
-    for i, row in enumerate(df_sorted.itertuples()):
-        col = cols[i % 3]  # distribui automaticamente
-        with col:
-            st.markdown(f"### 👤 {row.agente_email}")
-            st.metric("🎯 % Resolvidos", f"{row._4:.1f}%")  
-            st.metric("⭐ CSAT 4 e 5", f"{row._5:.1f}%")
-            st.metric("⚡ Atendidos até 1 min", f"{row._6:.1f}%")
-            st.metric("⏱️ TMA", f"{row.TMA:.1f} min")
-            st.metric("⌛ TMR", f"{row.TMR:.1f} min")
-            st.metric("📊 Total Tickets", row._2)
+    # Agrupa por agente
+    stats = df.groupby('agente_email', as_index=False).agg(
+        Atendidos=('Atendidos', 'sum'),
+        Resolvidos=('Total de tickets Resolvidos', 'sum'),
+        pct_resolvidos=('% Total de tickets Resolvidos', 'mean'),
+        csat=('% Avaliações CSAT 4 e 5', 'mean'),
+        sla=('% Atendidos 1 min', 'mean'),
+        TMA=('TMA', 'first'),  # pode ajustar média se necessário
+        TMR=('TMR', 'first')
+    )
+
+    # Ordena pelos menores CSAT (detratores)
+    stats = stats.sort_values('csat').head(3)
+
+    n_cols = 3  # número de colunas por linha
+    for i in range(0, len(stats), n_cols):
+        cols = st.columns(n_cols)
+        for j, (_, row) in enumerate(stats.iloc[i:i+n_cols].iterrows()):
+            with cols[j]:
+                delta_res = row['pct_resolvidos'] - media_res
+                delta_csat = row['csat'] - media_csat
+                delta_sla = row['sla'] - media_sla
+
+                st.markdown(f"""
+                    <div class="metric-card-leader">
+                        <p class="card-title" style="text-align:center; font-weight:bold;">{row['agente_email'].split('@')[0]}</p>
+                        <hr>
+                        <p><strong>CSAT:</strong> {row['csat']:.1f}% 
+                            <span class="metric-delta {'text-green' if delta_csat>=0 else 'text-red'}">({delta_csat:+.1f}%)</span></p>
+                        <p><strong>Resolução:</strong> {row['pct_resolvidos']:.1f}% 
+                            <span class="metric-delta {'text-green' if delta_res>=0 else 'text-red'}">({delta_res:+.1f}%)</span></p>
+                        <p><strong>Atendidos 1 min:</strong> {row['sla']:.1f}% 
+                            <span class="metric-delta {'text-green' if delta_sla>=0 else 'text-red'}">({delta_sla:+.1f}%)</span></p>
+                        <p><strong>Total Atendidos:</strong> {int(row['Atendidos'])}</p>
+                        <p><strong>TMA:</strong> {row['TMA']}</p>
+                        <p><strong>TMR:</strong> {row['TMR']}</p>
+                    </div>
+                """, unsafe_allow_html=True)
 
 
 
@@ -114,4 +136,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
