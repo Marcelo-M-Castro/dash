@@ -50,28 +50,39 @@ def pagina_lideres(df):
 
 
 def pagina_melhorias(df):
-    st.title("🚀 Oportunidades de Melhoria")
-    
-    # Agrupamento por agente
-    resumo = df.groupby("agente").agg({
-        "resolvido": "mean",
-        "atend_1min": "mean",
-        "id": "count"
-    }).reset_index()
-    resumo.columns = ["agente", "pct_resolvidos", "atend_1min", "qtd"]
+    st.header("🔎 Oportunidades de Melhoria")
 
-    # Ordena para mostrar os piores primeiro
-    df_sorted = resumo.sort_values(["pct_resolvidos", "atend_1min"]).head(12)
+    # Selecionar líder (filtro opcional)
+    lideres = df["Líder"].dropna().unique()
+    lider_filtro = st.selectbox("Filtrar por Líder", options=["Todos"] + sorted(lideres.tolist()))
+    if lider_filtro != "Todos":
+        df = df[df["Líder"] == lider_filtro]
 
-    st.subheader("Agentes com maiores oportunidades")
-    cols = st.columns(3)
+    # Ordenar agentes pela % de tickets resolvidos (menores primeiro = maiores oportunidades)
+    df_sorted = df.groupby("agente_email", as_index=False).agg({
+        "Total de Tickets": "sum",
+        "Total de tickets Resolvidos": "sum",
+        "% Total de tickets Resolvidos": "mean",
+        "% Avaliações CSAT 4 e 5": "mean",
+        "% Atendidos 1 min": "mean",
+        "TMA": "mean",
+        "TMR": "mean"
+    }).sort_values(by="% Total de tickets Resolvidos", ascending=True)
+
+    st.write("Agentes com maiores oportunidades de melhoria (ordenados pelo % resolvidos):")
+
+    cols = st.columns(3)  # grid de 3 colunas
     for i, row in enumerate(df_sorted.itertuples()):
-        col = cols[i % 3]  # distribui os cards automaticamente
+        col = cols[i % 3]  # distribui automaticamente
         with col:
-            st.markdown(f"### {row.agente}")
-            st.metric("% Resolvidos", f"{row.pct_resolvidos:.1f}%")
-            st.metric("% Até 1 min", f"{row.atend_1min:.1f}%")
-            st.metric("Qtd Atendimentos", row.qtd)
+            st.markdown(f"### 👤 {row.agente_email}")
+            st.metric("🎯 % Resolvidos", f"{row._4:.1f}%")  
+            st.metric("⭐ CSAT 4 e 5", f"{row._5:.1f}%")
+            st.metric("⚡ Atendidos até 1 min", f"{row._6:.1f}%")
+            st.metric("⏱️ TMA", f"{row.TMA:.1f} min")
+            st.metric("⌛ TMR", f"{row.TMR:.1f} min")
+            st.metric("📊 Total Tickets", row._2)
+
 
 
 # ==================
@@ -103,3 +114,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
